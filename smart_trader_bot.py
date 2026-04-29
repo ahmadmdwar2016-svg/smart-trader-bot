@@ -1,85 +1,45 @@
 import requests
-import json
 import time
 from datetime import datetime
 
 # ═══════════════════════════════════════════
 #           إعدادات النظام
 # ═══════════════════════════════════════════
-ALPHA_VANTAGE_KEY = "GJYPRVS8J3"
-TELEGRAM_TOKEN = "8786250525:AAGLrRaAu23YtPdnN1PEvNe-83afW2-PjJw"
+TWELVE_DATA_KEY  = "a3ebbcf50208480695b30ae9d9b16f9e"
+TELEGRAM_TOKEN   = "8786250525:AAGLrRaAu23YtPdnN1PEvNe-83afW2-PjJw"
 TELEGRAM_CHAT_ID = "-1003919024252"
 
-# الأسواق المراقبة
 MARKETS = {
-    "XAUUSD": {"name": "ذهب", "emoji": "🥇", "symbol": "XAU", "market": "forex"},
-    "EURUSD": {"name": "يورو/دولار", "emoji": "💱", "symbol": "EUR", "market": "forex"},
-    "GBPUSD": {"name": "جنيه/دولار", "emoji": "💷", "symbol": "GBP", "market": "forex"},
-    "USOIL":  {"name": "نفط", "emoji": "🛢️", "symbol": "WTI", "market": "oil"},
+    "XAU/USD": {"name": "ذهب",        "emoji": "🥇"},
+    "XTI/USD": {"name": "نفط",         "emoji": "🛢️"},
+    "EUR/USD": {"name": "يورو/دولار",  "emoji": "💱"},
+    "GBP/USD": {"name": "جنيه/دولار", "emoji": "💷"},
 }
 
 # ═══════════════════════════════════════════
-#         جلب بيانات السوق
+#         جلب البيانات من Twelve Data
 # ═══════════════════════════════════════════
-def get_forex_data(from_symbol, to_symbol="USD"):
-    url = f"https://www.alphavantage.co/query"
+def get_prices(symbol):
+    url = "https://api.twelvedata.com/time_series"
     params = {
-        "function": "FX_INTRADAY",
-        "from_symbol": from_symbol,
-        "to_symbol": to_symbol,
-        "interval": "60min",
-        "outputsize": "compact",
-        "apikey": ALPHA_VANTAGE_KEY
+        "symbol":     symbol,
+        "interval":   "1h",
+        "outputsize": 30,
+        "apikey":     TWELVE_DATA_KEY,
     }
     try:
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, params=params, timeout=15)
         data = r.json()
-        series = data.get("Time Series FX (60min)", {})
-        if not series:
+        if data.get("status") == "error":
+            print(f"⚠️ خطأ API لـ {symbol}: {data.get('message')}")
             return None
-        prices = []
-        for ts, vals in list(series.items())[:24]:
-            prices.append({
-                "time": ts,
-                "open": float(vals["1. open"]),
-                "high": float(vals["2. high"]),
-                "low": float(vals["3. low"]),
-                "close": float(vals["4. close"]),
-            })
-        return prices
-    except Exception as e:
-        print(f"خطأ في جلب البيانات: {e}")
-        return None
-
-def get_gold_data():
-    # الذهب عبر FX_DAILY
-    url = "https://www.alphavantage.co/query"
-    params = {
-        "function": "FX_INTRADAY",
-        "from_symbol": "XAU",
-        "to_symbol": "USD",
-        "interval": "60min",
-        "outputsize": "compact",
-        "apikey": ALPHA_VANTAGE_KEY
-    }
-    try:
-        r = requests.get(url, params=params, timeout=10)
-        data = r.json()
-        series = data.get("Time Series FX (60min)", {})
-        if not series:
+        values = data.get("values", [])
+        if not values:
             return None
-        prices = []
-        for ts, vals in list(series.items())[:24]:
-            prices.append({
-                "time": ts,
-                "open": float(vals["1. open"]),
-                "high": float(vals["2. high"]),
-                "low": float(vals["3. low"]),
-                "close": float(vals["4. close"]),
-            })
-        return prices
+        return [{"open": float(v["open"]), "high": float(v["high"]),
+                 "low": float(v["low"]), "close": float(v["close"])} for v in values]
     except Exception as e:
-        print(f"خطأ في جلب بيانات الذهب: {e}")
+        print(f"❌ خطأ في جلب {symbol}: {e}")
         return None
 
 # ═══════════════════════════════════════════
@@ -87,103 +47,64 @@ def get_gold_data():
 # ═══════════════════════════════════════════
 def calculate_atr(prices, period=14):
     trs = []
-    for i in range(1, min(period+1, len(prices))):
-        high = prices[i]["high"]
-        low = prices[i]["low"]
-        prev_close = prices[i-1]["close"]
-        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
-        trs.append(tr)
+    for i in range(1, min(period + 1, len(prices))):
+        h, l, pc = prices[i]["high"], prices[i]["low"], prices[i-1]["close"]
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
     return sum(trs) / len(trs) if trs else 0
 
-def calculate_support_resistance(prices, period=20):
-    highs = [p["high"] for p in prices[:period]]
-    lows = [p["low"] for p in prices[:period]]
-    resistance = max(highs)
-    support = min(lows)
-    return support, resistance
-
 def calculate_rsi(prices, period=14):
-    closes = [p["close"] for p in prices[:period+1]]
+    closes = [p["close"] for p in prices[:period + 1]]
     gains, losses = [], []
     for i in range(1, len(closes)):
-        diff = closes[i-1] - closes[i]  # مقلوب لأن الأحدث أولاً
-        if diff > 0:
-            gains.append(diff)
-            losses.append(0)
-        else:
-            gains.append(0)
-            losses.append(abs(diff))
-    avg_gain = sum(gains) / period if gains else 0
-    avg_loss = sum(losses) / period if losses else 0
-    if avg_loss == 0:
-        return 100
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+        diff = closes[i-1] - closes[i]
+        gains.append(abs(diff) if diff > 0 else 0)
+        losses.append(abs(diff) if diff < 0 else 0)
+    ag = sum(gains) / period if gains else 0
+    al = sum(losses) / period if losses else 0
+    return 100 if al == 0 else round(100 - (100 / (1 + ag / al)), 1)
 
 def determine_signal(prices):
-    if not prices or len(prices) < 15:
+    if not prices or len(prices) < 20:
         return None
-
-    current_price = prices[0]["close"]
-    atr = calculate_atr(prices)
-    support, resistance = calculate_support_resistance(prices)
-    rsi = calculate_rsi(prices)
-
-    # تحديد الاتجاه
-    ma5 = sum(p["close"] for p in prices[:5]) / 5
+    cp   = prices[0]["close"]
+    atr  = calculate_atr(prices)
+    rsi  = calculate_rsi(prices)
+    ma5  = sum(p["close"] for p in prices[:5])  / 5
     ma20 = sum(p["close"] for p in prices[:20]) / 20
 
-    if ma5 > ma20 and rsi < 70 and current_price > support:
+    if ma5 > ma20 and rsi < 68:
         direction = "BUY"
-    elif ma5 < ma20 and rsi > 30 and current_price < resistance:
+    elif ma5 < ma20 and rsi > 32:
         direction = "SELL"
     else:
-        return None  # لا توجد فرصة واضحة
+        return None
 
-    # حساب نقاط الدخول
+    mul = [0.8, 1.5, 2.2]
     if direction == "BUY":
-        entry_low = round(current_price - atr * 0.3, 5)
-        entry_high = round(current_price + atr * 0.1, 5)
-        stop_loss = round(current_price - atr * 1.2, 5)
-        targets = [
-            round(current_price + atr * 0.8, 5),
-            round(current_price + atr * 1.5, 5),
-            round(current_price + atr * 2.2, 5),
-        ]
+        entry_low, entry_high = round(cp - atr*0.3, 5), round(cp + atr*0.1, 5)
+        stop_loss = round(cp - atr*1.2, 5)
+        targets   = [round(cp + atr*m, 5) for m in mul]
     else:
-        entry_low = round(current_price - atr * 0.1, 5)
-        entry_high = round(current_price + atr * 0.3, 5)
-        stop_loss = round(current_price + atr * 1.2, 5)
-        targets = [
-            round(current_price - atr * 0.8, 5),
-            round(current_price - atr * 1.5, 5),
-            round(current_price - atr * 2.2, 5),
-        ]
+        entry_low, entry_high = round(cp - atr*0.1, 5), round(cp + atr*0.3, 5)
+        stop_loss = round(cp + atr*1.2, 5)
+        targets   = [round(cp - atr*m, 5) for m in mul]
 
-    return {
-        "direction": direction,
-        "entry_low": entry_low,
-        "entry_high": entry_high,
-        "stop_loss": stop_loss,
-        "targets": targets,
-        "rsi": round(rsi, 1),
-        "current_price": current_price,
-    }
+    return {"direction": direction, "entry_low": entry_low,
+            "entry_high": entry_high, "stop_loss": stop_loss,
+            "targets": targets, "rsi": rsi}
 
 # ═══════════════════════════════════════════
 #         تنسيق المنشور
 # ═══════════════════════════════════════════
-def format_message(market_key, signal):
-    market = MARKETS[market_key]
-    direction_ar = "🟢 شراء BUY" if signal["direction"] == "BUY" else "🔴 بيع SELL"
+def format_message(symbol, signal):
+    m = MARKETS[symbol]
+    dir_ar = "🟢 شراء  BUY" if signal["direction"] == "BUY" else "🔴 بيع  SELL"
     now = datetime.now().strftime("%Y-%m-%d | %H:%M")
-
-    msg = f"""
-╔══════════════════════╗
-     {market['emoji']} {market['name']} — إشارة تداول
+    return f"""╔══════════════════════╗
+   {m['emoji']} {m['name']} — إشارة تداول
 ╚══════════════════════╝
 
-📌 الاتجاه: {direction_ar}
+📌 الاتجاه: {dir_ar}
 
 نقطة الدخول 📊 {signal['entry_low']} - {signal['entry_high']}
 🚫 وقف الخسارة: {signal['stop_loss']}
@@ -194,74 +115,51 @@ def format_message(market_key, signal):
 🎯 رابع هدف: مفتوح 🚀
 
 👉⚠️ يرجى مراعاة إدارة رأس المال
-❗️ الدخول لوت 0.10 لكل 1000$ رأس مال
-❗️ #تنبيه: دخولك يكون 1% من رأس المال
+❗️الدخول لوت 0.10 لكل 1000$ رأس مال
+❗️ #تنبيه : دخولك يكون 1% من رأس المال
 
 📊 RSI: {signal['rsi']}
 🕐 {now}
 
 ⚠️ هذه الصفقة لأغراض تعليمية فقط، وليست نصيحة مالية.
 
-@smart_trader_sa_bot
-"""
-    return msg.strip()
+@smart_trader_sa_bot"""
 
 # ═══════════════════════════════════════════
 #         إرسال رسالة تيليغرام
 # ═══════════════════════════════════════════
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
     try:
-        r = requests.post(url, json=payload, timeout=10)
-        result = r.json()
-        if result.get("ok"):
-            print("✅ تم الإرسال بنجاح")
-        else:
-            print(f"❌ خطأ في الإرسال: {result}")
+        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message}, timeout=10)
+        print("✅ تم الإرسال" if r.json().get("ok") else f"❌ خطأ: {r.json()}")
     except Exception as e:
         print(f"❌ خطأ: {e}")
 
 # ═══════════════════════════════════════════
-#         الحلقة الرئيسية
+#         الحلقة الرئيسية — كل 4 ساعات
 # ═══════════════════════════════════════════
 def run():
-    print("🚀 Smart Trader Bot يعمل...")
-    signals_sent = 0
-
-    market_fetchers = {
-        "XAUUSD": lambda: get_gold_data(),
-        "EURUSD": lambda: get_forex_data("EUR"),
-        "GBPUSD": lambda: get_forex_data("GBP"),
-        "USOIL":  lambda: get_forex_data("USO"),
-    }
-
-    for market_key, fetcher in market_fetchers.items():
-        market = MARKETS[market_key]
-        print(f"\n📊 تحليل {market['name']}...")
-
-        prices = fetcher()
-        if not prices:
-            print(f"⚠️ لا توجد بيانات لـ {market['name']}")
-            time.sleep(15)  # انتظر بين الطلبات
-            continue
-
-        signal = determine_signal(prices)
-        if signal:
-            msg = format_message(market_key, signal)
-            print(msg)
-            send_telegram(msg)
-            signals_sent += 1
-        else:
-            print(f"⏳ لا توجد فرصة واضحة في {market['name']} الآن")
-
-        time.sleep(15)  # انتظر بين كل سوق
-
-    print(f"\n✅ انتهى التحليل — تم إرسال {signals_sent} إشارة")
+    while True:
+        print(f"\n🚀 جلسة تحليل جديدة — {datetime.now().strftime('%H:%M')}")
+        sent = 0
+        for symbol, info in MARKETS.items():
+            print(f"\n📊 تحليل {info['name']}...")
+            prices = get_prices(symbol)
+            if not prices:
+                print(f"⚠️ لا توجد بيانات لـ {info['name']}")
+                time.sleep(20)
+                continue
+            signal = determine_signal(prices)
+            if signal:
+                send_telegram(format_message(symbol, signal))
+                sent += 1
+            else:
+                print(f"⏳ لا توجد فرصة واضحة في {info['name']} الآن")
+            time.sleep(20)
+        print(f"\n✅ انتهى التحليل — تم إرسال {sent} إشارة")
+        print("⏰ الانتظار 4 ساعات...")
+        time.sleep(4 * 60 * 60)
 
 if __name__ == "__main__":
     run()
