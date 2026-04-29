@@ -17,14 +17,12 @@ MARKETS = {
     "GBP/USD": {"name": "جنيه/دولار", "emoji": "💷", "decimals": 5},
 }
 
-# ملف لتتبع آخر إرسال لكل زوج
 SENT_LOG = "/tmp/sent_log.txt"
 
 # ═══════════════════════════════════════════
 #         منع الإرسال المكرر
 # ═══════════════════════════════════════════
 def already_sent(symbol):
-    """تحقق إذا تم إرسال إشارة لهذا الزوج في آخر 4 ساعات"""
     if not os.path.exists(SENT_LOG):
         return False
     with open(SENT_LOG, "r") as f:
@@ -33,13 +31,11 @@ def already_sent(symbol):
     for line in lines:
         parts = line.strip().split("|")
         if len(parts) == 2 and parts[0] == symbol:
-            last_sent = float(parts[1])
-            if now - last_sent < 4 * 60 * 60:  # أقل من 4 ساعات
+            if now - float(parts[1]) < 4 * 60 * 60:
                 return True
     return False
 
 def mark_sent(symbol):
-    """سجّل وقت الإرسال لهذا الزوج"""
     lines = []
     if os.path.exists(SENT_LOG):
         with open(SENT_LOG, "r") as f:
@@ -95,9 +91,13 @@ def calculate_rsi(prices, period=14):
     al = sum(losses) / period if losses else 0
     return 100 if al == 0 else round(100 - (100 / (1 + ag / al)), 1)
 
-def determine_signal(prices, decimals):
+def determine_signal(prices, symbol):
+    info = MARKETS[symbol]
+    d = info["decimals"]
+
     if not prices or len(prices) < 20:
         return None
+
     cp   = prices[0]["close"]
     atr  = calculate_atr(prices)
     rsi  = calculate_rsi(prices)
@@ -111,16 +111,43 @@ def determine_signal(prices, decimals):
     else:
         return None
 
-    d = decimals
-    mul = [0.8, 1.5, 2.2]
-    if direction == "BUY":
-        entry_low, entry_high = round(cp - atr*0.3, d), round(cp + atr*0.1, d)
-        stop_loss = round(cp - atr*1.2, d)
-        targets   = [round(cp + atr*m, d) for m in mul]
+    # ═══════════════════════════════════════
+    # الذهب — أهداف ثابتة بالنقاط
+    # 50 نقطة = 0.50 دولار في الذهب
+    # ═══════════════════════════════════════
+    if symbol == "XAU/USD":
+        pip = 0.10  # قيمة النقطة الواحدة في الذهب
+        t1  = 50  * pip   # 5.0
+        t2  = 100 * pip   # 10.0
+        t3  = 150 * pip   # 15.0
+        sl  = 30  * pip   # وقف الخسارة 30 نقطة
+
+        if direction == "BUY":
+            entry_low  = round(cp - atr * 0.2, d)
+            entry_high = round(cp, d)
+            stop_loss  = round(cp - sl, d)
+            targets    = [round(cp + t1, d), round(cp + t2, d), round(cp + t3, d)]
+        else:
+            entry_low  = round(cp, d)
+            entry_high = round(cp + atr * 0.2, d)
+            stop_loss  = round(cp + sl, d)
+            targets    = [round(cp - t1, d), round(cp - t2, d), round(cp - t3, d)]
+
+    # ═══════════════════════════════════════
+    # باقي الأسواق — أهداف بالـ ATR
+    # ═══════════════════════════════════════
     else:
-        entry_low, entry_high = round(cp - atr*0.1, d), round(cp + atr*0.3, d)
-        stop_loss = round(cp + atr*1.2, d)
-        targets   = [round(cp - atr*m, d) for m in mul]
+        mul = [0.8, 1.5, 2.2]
+        if direction == "BUY":
+            entry_low  = round(cp - atr * 0.3, d)
+            entry_high = round(cp + atr * 0.1, d)
+            stop_loss  = round(cp - atr * 1.2, d)
+            targets    = [round(cp + atr * m, d) for m in mul]
+        else:
+            entry_low  = round(cp - atr * 0.1, d)
+            entry_high = round(cp + atr * 0.3, d)
+            stop_loss  = round(cp + atr * 1.2, d)
+            targets    = [round(cp - atr * m, d) for m in mul]
 
     return {"direction": direction, "entry_low": entry_low,
             "entry_high": entry_high, "stop_loss": stop_loss,
@@ -148,7 +175,7 @@ def format_message(symbol, signal):
 🎯 رابع هدف: مفتوح 🚀
 
 👉⚠️ يرجى مراعاة إدارة رأس المال
-❗️الدخول لوت 0.01 لكل 1000$ رأس مال
+❗️الدخول لوت 0.10 لكل 1000$ رأس مال
 ❗️ #تنبيه : دخولك يكون 1% من رأس المال
 
 📊 RSI: {signal['rsi']}
@@ -177,7 +204,6 @@ def run():
         for symbol, info in MARKETS.items():
             print(f"\n📊 تحليل {info['name']}...")
 
-            # تحقق إذا أُرسلت إشارة لهذا الزوج مؤخراً
             if already_sent(symbol):
                 print(f"⏭️ تم إرسال {info['name']} مؤخراً — تخطي")
                 time.sleep(5)
@@ -189,10 +215,10 @@ def run():
                 time.sleep(20)
                 continue
 
-            signal = determine_signal(prices, info["decimals"])
+            signal = determine_signal(prices, symbol)
             if signal:
                 send_telegram(format_message(symbol, signal))
-                mark_sent(symbol)  # سجّل الإرسال
+                mark_sent(symbol)
                 sent += 1
             else:
                 print(f"⏳ لا توجد فرصة واضحة في {info['name']} الآن")
