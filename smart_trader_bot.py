@@ -81,13 +81,13 @@ def determine_signal(prices):
 
     mul = [0.8, 1.5, 2.2]
     if direction == "BUY":
-        entry_low, entry_high = round(cp - atr*0.3, 5), round(cp + atr*0.1, 5)
-        stop_loss = round(cp - atr*1.2, 5)
-        targets   = [round(cp + atr*m, 5) for m in mul]
+        entry_low, entry_high = round(cp - atr*0.3, 2), round(cp + atr*0.1, 2)
+        stop_loss = round(cp - atr*1.2, 2)
+        targets   = [round(cp + atr*m, 2) for m in mul]
     else:
-        entry_low, entry_high = round(cp - atr*0.1, 5), round(cp + atr*0.3, 5)
-        stop_loss = round(cp + atr*1.2, 5)
-        targets   = [round(cp - atr*m, 5) for m in mul]
+        entry_low, entry_high = round(cp - atr*0.1, 2), round(cp + atr*0.3, 2)
+        stop_loss = round(cp + atr*1.2, 2)
+        targets   = [round(cp - atr*m, 2) for m in mul]
 
     return {"direction": direction, "entry_low": entry_low,
             "entry_high": entry_high, "stop_loss": stop_loss,
