@@ -1,5 +1,6 @@
 import requests
 import time
+import os
 from datetime import datetime
 
 # ═══════════════════════════════════════════
@@ -9,13 +10,43 @@ TWELVE_DATA_KEY  = "a3ebbcf50208480695b30ae9d9b16f9e"
 TELEGRAM_TOKEN   = "8786250525:AAGLrRaAu23YtPdnN1PEvNe-83afW2-PjJw"
 TELEGRAM_CHAT_ID = "-1003919024252"
 
-# الذهب والنفط = خانتين | الفوركس = 5 خانات
 MARKETS = {
     "XAU/USD": {"name": "ذهب",        "emoji": "🥇", "decimals": 2},
     "XTI/USD": {"name": "نفط",         "emoji": "🛢️", "decimals": 2},
     "EUR/USD": {"name": "يورو/دولار",  "emoji": "💱", "decimals": 5},
     "GBP/USD": {"name": "جنيه/دولار", "emoji": "💷", "decimals": 5},
 }
+
+# ملف لتتبع آخر إرسال لكل زوج
+SENT_LOG = "/tmp/sent_log.txt"
+
+# ═══════════════════════════════════════════
+#         منع الإرسال المكرر
+# ═══════════════════════════════════════════
+def already_sent(symbol):
+    """تحقق إذا تم إرسال إشارة لهذا الزوج في آخر 4 ساعات"""
+    if not os.path.exists(SENT_LOG):
+        return False
+    with open(SENT_LOG, "r") as f:
+        lines = f.readlines()
+    now = datetime.now().timestamp()
+    for line in lines:
+        parts = line.strip().split("|")
+        if len(parts) == 2 and parts[0] == symbol:
+            last_sent = float(parts[1])
+            if now - last_sent < 4 * 60 * 60:  # أقل من 4 ساعات
+                return True
+    return False
+
+def mark_sent(symbol):
+    """سجّل وقت الإرسال لهذا الزوج"""
+    lines = []
+    if os.path.exists(SENT_LOG):
+        with open(SENT_LOG, "r") as f:
+            lines = [l for l in f.readlines() if not l.startswith(symbol)]
+    lines.append(f"{symbol}|{datetime.now().timestamp()}\n")
+    with open(SENT_LOG, "w") as f:
+        f.writelines(lines)
 
 # ═══════════════════════════════════════════
 #         جلب البيانات من Twelve Data
@@ -145,18 +176,28 @@ def run():
         sent = 0
         for symbol, info in MARKETS.items():
             print(f"\n📊 تحليل {info['name']}...")
+
+            # تحقق إذا أُرسلت إشارة لهذا الزوج مؤخراً
+            if already_sent(symbol):
+                print(f"⏭️ تم إرسال {info['name']} مؤخراً — تخطي")
+                time.sleep(5)
+                continue
+
             prices = get_prices(symbol)
             if not prices:
                 print(f"⚠️ لا توجد بيانات لـ {info['name']}")
                 time.sleep(20)
                 continue
+
             signal = determine_signal(prices, info["decimals"])
             if signal:
                 send_telegram(format_message(symbol, signal))
+                mark_sent(symbol)  # سجّل الإرسال
                 sent += 1
             else:
                 print(f"⏳ لا توجد فرصة واضحة في {info['name']} الآن")
             time.sleep(20)
+
         print(f"\n✅ انتهى التحليل — تم إرسال {sent} إشارة")
         print("⏰ الانتظار 4 ساعات...")
         time.sleep(4 * 60 * 60)
