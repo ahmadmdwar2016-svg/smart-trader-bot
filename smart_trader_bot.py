@@ -9,11 +9,12 @@ TWELVE_DATA_KEY  = "a3ebbcf50208480695b30ae9d9b16f9e"
 TELEGRAM_TOKEN   = "8786250525:AAGLrRaAu23YtPdnN1PEvNe-83afW2-PjJw"
 TELEGRAM_CHAT_ID = "-1003919024252"
 
+# الذهب والنفط = خانتين | الفوركس = 5 خانات
 MARKETS = {
-    "XAU/USD": {"name": "ذهب",        "emoji": "🥇"},
-    "XTI/USD": {"name": "نفط",         "emoji": "🛢️"},
-    "EUR/USD": {"name": "يورو/دولار",  "emoji": "💱"},
-    "GBP/USD": {"name": "جنيه/دولار", "emoji": "💷"},
+    "XAU/USD": {"name": "ذهب",        "emoji": "🥇", "decimals": 2},
+    "XTI/USD": {"name": "نفط",         "emoji": "🛢️", "decimals": 2},
+    "EUR/USD": {"name": "يورو/دولار",  "emoji": "💱", "decimals": 5},
+    "GBP/USD": {"name": "جنيه/دولار", "emoji": "💷", "decimals": 5},
 }
 
 # ═══════════════════════════════════════════
@@ -63,7 +64,7 @@ def calculate_rsi(prices, period=14):
     al = sum(losses) / period if losses else 0
     return 100 if al == 0 else round(100 - (100 / (1 + ag / al)), 1)
 
-def determine_signal(prices):
+def determine_signal(prices, decimals):
     if not prices or len(prices) < 20:
         return None
     cp   = prices[0]["close"]
@@ -79,15 +80,16 @@ def determine_signal(prices):
     else:
         return None
 
+    d = decimals
     mul = [0.8, 1.5, 2.2]
     if direction == "BUY":
-        entry_low, entry_high = round(cp - atr*0.3, 2), round(cp + atr*0.1, 2)
-        stop_loss = round(cp - atr*1.2, 2)
-        targets   = [round(cp + atr*m, 2) for m in mul]
+        entry_low, entry_high = round(cp - atr*0.3, d), round(cp + atr*0.1, d)
+        stop_loss = round(cp - atr*1.2, d)
+        targets   = [round(cp + atr*m, d) for m in mul]
     else:
-        entry_low, entry_high = round(cp - atr*0.1, 2), round(cp + atr*0.3, 2)
-        stop_loss = round(cp + atr*1.2, 2)
-        targets   = [round(cp - atr*m, 2) for m in mul]
+        entry_low, entry_high = round(cp - atr*0.1, d), round(cp + atr*0.3, d)
+        stop_loss = round(cp + atr*1.2, d)
+        targets   = [round(cp - atr*m, d) for m in mul]
 
     return {"direction": direction, "entry_low": entry_low,
             "entry_high": entry_high, "stop_loss": stop_loss,
@@ -121,9 +123,7 @@ def format_message(symbol, signal):
 📊 RSI: {signal['rsi']}
 🕐 {now}
 
-⚠️ هذه الصفقة لأغراض تعليمية فقط، وليست نصيحة مالية.
-
-@smart_trader_sa_bot"""
+⚠️ هذه الصفقة لأغراض تعليمية فقط، وليست نصيحة مالية."""
 
 # ═══════════════════════════════════════════
 #         إرسال رسالة تيليغرام
@@ -150,7 +150,7 @@ def run():
                 print(f"⚠️ لا توجد بيانات لـ {info['name']}")
                 time.sleep(20)
                 continue
-            signal = determine_signal(prices)
+            signal = determine_signal(prices, info["decimals"])
             if signal:
                 send_telegram(format_message(symbol, signal))
                 sent += 1
