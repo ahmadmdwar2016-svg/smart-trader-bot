@@ -92,8 +92,7 @@ def calculate_rsi(prices, period=14):
     return 100 if al == 0 else round(100 - (100 / (1 + ag / al)), 1)
 
 def determine_signal(prices, symbol):
-    info = MARKETS[symbol]
-    d = info["decimals"]
+    d = MARKETS[symbol]["decimals"]
 
     if not prices or len(prices) < 20:
         return None
@@ -112,24 +111,24 @@ def determine_signal(prices, symbol):
         return None
 
     # ═══════════════════════════════════════
-    # الذهب — أهداف ثابتة بالنقاط
-    # 50 نقطة = 0.50 دولار في الذهب
+    # الذهب — نقطة دخول واحدة + أهداف ثابتة
     # ═══════════════════════════════════════
     if symbol == "XAU/USD":
-        pip = 0.10  # قيمة النقطة الواحدة في الذهب
-        t1  = 50  * pip   # 5.0
-        t2  = 100 * pip   # 10.0
-        t3  = 150 * pip   # 15.0
-        sl  = 30  * pip   # وقف الخسارة 30 نقطة
+        # نقطة الدخول = السعر الحالي ± 3 دولار فقط
+        step = 3.0   # مدى الدخول
+        t1   = 5.0   # هدف 1 = 50 نقطة
+        t2   = 10.0  # هدف 2 = 100 نقطة
+        t3   = 15.0  # هدف 3 = 150 نقطة
+        sl   = 10.0  # وقف الخسارة = 100 نقطة
 
         if direction == "BUY":
-            entry_low  = round(cp - atr * 0.2, d)
-            entry_high = round(cp, d)
+            entry_low  = round(cp - step, d)
+            entry_high = round(cp + step, d)
             stop_loss  = round(cp - sl, d)
             targets    = [round(cp + t1, d), round(cp + t2, d), round(cp + t3, d)]
         else:
-            entry_low  = round(cp, d)
-            entry_high = round(cp + atr * 0.2, d)
+            entry_low  = round(cp - step, d)
+            entry_high = round(cp + step, d)
             stop_loss  = round(cp + sl, d)
             targets    = [round(cp - t1, d), round(cp - t2, d), round(cp - t3, d)]
 
@@ -175,7 +174,7 @@ def format_message(symbol, signal):
 🎯 رابع هدف: مفتوح 🚀
 
 👉⚠️ يرجى مراعاة إدارة رأس المال
-❗️الدخول لوت 0.01 لكل 1000$ رأس مال
+❗️الدخول لوت 0.02 لكل 1000$ رأس مال
 ❗️ #تنبيه : دخولك يكون 1% من رأس المال
 
 📊 RSI: {signal['rsi']}
