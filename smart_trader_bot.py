@@ -1,7 +1,7 @@
 import requests
 import time
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 # ═══════════════════════════════════════════
 #           إعدادات النظام
@@ -20,20 +20,49 @@ MARKETS = {
 SENT_LOG = "/tmp/sent_log.txt"
 
 # ═══════════════════════════════════════════
-#         التحقق من يوم العمل
+#   أوقات سوق الفوركس والذهب (UTC)
+#
+#   السوق يفتح: الأحد 22:00 UTC
+#   السوق يغلق: الجمعة 22:00 UTC
+#   أول ساعتين بعد الافتتاح = 22:00-00:00 UTC الأحد
 # ═══════════════════════════════════════════
-def is_trading_day():
-    """السبت = 5، الأحد = 6 — لا إرسال"""
-    day = datetime.now().weekday()
-    if day in [5, 6]:
-        print(f"📅 اليوم عطلة ({['الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت','الأحد'][day]}) — لا إرسال")
+def is_market_open():
+    now_utc = datetime.now(timezone.utc)
+    day  = now_utc.weekday()   # 0=الاثنين ... 6=الأحد
+    hour = now_utc.hour
+    minute = now_utc.minute
+
+    # السبت كامل = مغلق
+    if day == 5:
+        print(f"📅 السبت — السوق مغلق")
         return False
+
+    # الأحد قبل 22:00 UTC = مغلق
+    if day == 6 and hour < 22:
+        print(f"📅 الأحد قبل الافتتاح — السوق مغلق")
+        return False
+
+    # الأحد 22:00-23:59 UTC = أول ساعتين بعد الافتتاح — لا إرسال
+    if day == 6 and hour >= 22:
+        print(f"⏳ أول ساعتين من افتتاح السوق — انتظار")
+        return False
+
+    # الاثنين 00:00-00:00 UTC = ساعة ثانية من الافتتاح — لا إرسال
+    if day == 0 and hour == 0:
+        print(f"⏳ أول ساعتين من افتتاح السوق — انتظار")
+        return False
+
+    # الجمعة بعد 22:00 UTC = مغلق
+    if day == 4 and hour >= 22:
+        print(f"📅 الجمعة بعد الإغلاق — السوق مغلق")
+        return False
+
     return True
 
 # ═══════════════════════════════════════════
 #         منع الإرسال المكرر
 # ═══════════════════════════════════════════
-def already_sent(symbol):
+def already_sent(symbol, hours=1):
     if not os.path.exists(SENT_LOG):
         return False
     with open(SENT_LOG, "r") as f:
@@ -42,7 +71,7 @@ def already_sent(symbol):
     for line in lines:
         parts = line.strip().split("|")
         if len(parts) == 2 and parts[0] == symbol:
-            if now - float(parts[1]) < 4 * 60 * 60:
+            if now - float(parts[1]) < hours * 60 * 60:
                 return True
     return False
 
@@ -104,7 +133,6 @@ def calculate_rsi(prices, period=14):
 
 def determine_signal(prices, symbol):
     d = MARKETS[symbol]["decimals"]
-
     if not prices or len(prices) < 20:
         return None
 
@@ -121,42 +149,28 @@ def determine_signal(prices, symbol):
     else:
         return None
 
-    # ═══════════════════════════════════════
-    # الذهب — نقطة دخول واحدة + أهداف ثابتة
-    # ═══════════════════════════════════════
     if symbol == "XAU/USD":
         step = 3.0
-        t1   = 5.0
-        t2   = 10.0
-        t3   = 15.0
-        sl   = 10.0
-
+        t1, t2, t3 = 5.0, 10.0, 15.0
+        sl  = 10.0
         if direction == "BUY":
-            entry_low  = round(cp - step, d)
-            entry_high = round(cp + step, d)
-            stop_loss  = round(cp - sl, d)
-            targets    = [round(cp + t1, d), round(cp + t2, d), round(cp + t3, d)]
+            entry_low, entry_high = round(cp - step, d), round(cp + step, d)
+            stop_loss = round(cp - sl, d)
+            targets   = [round(cp + t1, d), round(cp + t2, d), round(cp + t3, d)]
         else:
-            entry_low  = round(cp - step, d)
-            entry_high = round(cp + step, d)
-            stop_loss  = round(cp + sl, d)
-            targets    = [round(cp - t1, d), round(cp - t2, d), round(cp - t3, d)]
-
-    # ═══════════════════════════════════════
-    # باقي الأسواق — أهداف بالـ ATR
-    # ═══════════════════════════════════════
+            entry_low, entry_high = round(cp - step, d), round(cp + step, d)
+            stop_loss = round(cp + sl, d)
+            targets   = [round(cp - t1, d), round(cp - t2, d), round(cp - t3, d)]
     else:
         mul = [0.8, 1.5, 2.2]
         if direction == "BUY":
-            entry_low  = round(cp - atr * 0.3, d)
-            entry_high = round(cp + atr * 0.1, d)
-            stop_loss  = round(cp - atr * 1.2, d)
-            targets    = [round(cp + atr * m, d) for m in mul]
+            entry_low, entry_high = round(cp - atr*0.3, d), round(cp + atr*0.1, d)
+            stop_loss = round(cp - atr*1.2, d)
+            targets   = [round(cp + atr*m, d) for m in mul]
         else:
-            entry_low  = round(cp - atr * 0.1, d)
-            entry_high = round(cp + atr * 0.3, d)
-            stop_loss  = round(cp + atr * 1.2, d)
-            targets    = [round(cp - atr * m, d) for m in mul]
+            entry_low, entry_high = round(cp - atr*0.1, d), round(cp + atr*0.3, d)
+            stop_loss = round(cp + atr*1.2, d)
+            targets   = [round(cp - atr*m, d) for m in mul]
 
     return {"direction": direction, "entry_low": entry_low,
             "entry_high": entry_high, "stop_loss": stop_loss,
@@ -184,7 +198,7 @@ def format_message(symbol, signal):
 🎯 رابع هدف: مفتوح 🚀
 
 👉⚠️ يرجى مراعاة إدارة رأس المال
-❗️الدخول لوت 0.01 لكل 1000$ رأس مال
+❗️الدخول لوت 0.10 لكل 1000$ رأس مال
 ❗️ #تنبيه : دخولك يكون 1% من رأس المال
 
 📊 RSI: {signal['rsi']}
@@ -204,24 +218,48 @@ def send_telegram(message):
         print(f"❌ خطأ: {e}")
 
 # ═══════════════════════════════════════════
-#         الحلقة الرئيسية — كل 4 ساعات
+#   الحلقة الرئيسية
+#   الذهب  = كل ساعة
+#   الباقي = كل 4 ساعات
 # ═══════════════════════════════════════════
 def run():
     while True:
-        now = datetime.now()
-        print(f"\n🚀 جلسة تحليل جديدة — {now.strftime('%H:%M')}")
+        now_str = datetime.now().strftime("%H:%M")
+        print(f"\n🚀 دورة تحليل جديدة — {now_str}")
 
-        # تحقق من يوم العمل
-        if not is_trading_day():
-            print("⏰ الانتظار ساعة للتحقق مجدداً...")
-            time.sleep(60 * 60)
+        # تحقق من أوقات السوق
+        if not is_market_open():
+            print("⏰ الانتظار 30 دقيقة للتحقق مجدداً...")
+            time.sleep(30 * 60)
             continue
 
-        sent = 0
-        for symbol, info in MARKETS.items():
+        # ── الذهب أولاً — كل ساعة ──────────────
+        symbol = "XAU/USD"
+        info   = MARKETS[symbol]
+        print(f"\n📊 تحليل {info['name']}...")
+
+        if already_sent(symbol, hours=1):
+            print(f"⏭️ تم إرسال الذهب مؤخراً — تخطي")
+        else:
+            prices = get_prices(symbol)
+            if prices:
+                signal = determine_signal(prices, symbol)
+                if signal:
+                    send_telegram(format_message(symbol, signal))
+                    mark_sent(symbol)
+                else:
+                    print("⏳ لا توجد فرصة واضحة في الذهب الآن")
+            else:
+                print(f"⚠️ لا توجد بيانات للذهب")
+
+        time.sleep(20)
+
+        # ── باقي الأسواق — كل 4 ساعات ───────────
+        for symbol in ["XTI/USD", "EUR/USD", "GBP/USD"]:
+            info = MARKETS[symbol]
             print(f"\n📊 تحليل {info['name']}...")
 
-            if already_sent(symbol):
+            if already_sent(symbol, hours=4):
                 print(f"⏭️ تم إرسال {info['name']} مؤخراً — تخطي")
                 time.sleep(5)
                 continue
@@ -236,14 +274,12 @@ def run():
             if signal:
                 send_telegram(format_message(symbol, signal))
                 mark_sent(symbol)
-                sent += 1
             else:
                 print(f"⏳ لا توجد فرصة واضحة في {info['name']} الآن")
             time.sleep(20)
 
-        print(f"\n✅ انتهى التحليل — تم إرسال {sent} إشارة")
-        print("⏰ الانتظار 4 ساعات...")
-        time.sleep(4 * 60 * 60)
+        print(f"\n✅ انتهت الدورة — الانتظار ساعة...")
+        time.sleep(60 * 60)  # انتظر ساعة للدورة القادمة
 
 if __name__ == "__main__":
     run()
